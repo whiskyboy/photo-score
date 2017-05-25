@@ -203,8 +203,8 @@ if __name__ == "__main__":
     max_request_num = 200000
     web_parser = WebParser(init_img_id, wait_second=1, max_retry_time=10)
     
-    img_attr_csv_file = open("./data/img_attr.csv", 'w')
-    img_comments_file = open("./data/img_comments.csv", 'w')
+    img_attr_csv_file = open("./data/img_attr.csv", 'aw')
+    img_comments_file = open("./data/img_comments.csv", 'aw')
 
     while web_parser.is_loaded and web_parser.request_num <= max_request_num:
         img_id = web_parser.img_id
