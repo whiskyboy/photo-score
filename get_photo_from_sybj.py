@@ -1,15 +1,15 @@
 # coding: utf-8
 
 import os
-import urllib2
-from bs4 import BeautifulSoup
-import urllib
-from PIL import Image
-import matplotlib.pyplot as plt
 import logging
 import time
 import re
+import urllib
+import urllib2
 import requests
+from bs4 import BeautifulSoup
+from PIL import Image
+import matplotlib.pyplot as plt
 from multiprocessing import Process, Semaphore, Lock, Queue, Pool
 
 logging.basicConfig(level=logging.DEBUG,
@@ -41,7 +41,7 @@ class WebParser(object):
         return "http://www.sybj.com/may.php?c=w&a=organizationCommunity&t=1&hid=1126&id=%s"%self.img_id
     
     def build_request_headers(self):
-        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/603.1.30 (KHTML, like Gecko) Version/10.1 Safari/603.1.30"
+        user_agent = "Mozilla/5.0 (X11; U; Linux x86_64; en-US; rv:1.9.2.24) Gecko/20111109 CentOS/3.6.24-3.el6.centos Firefox/3.6.24"
         request_headers = {'User-Agent': user_agent}
         return request_headers
 
@@ -61,13 +61,13 @@ class WebParser(object):
                 except Exception, e:
                     time.sleep(self.wait_second * 10)
                 else:
+                    self.save_html(html, cache_file)
                     loginfo("[imgid=%s]download html successfully."%self.img_id)
                     is_opened = True
                     break
             if not is_opened:
                 logwarning("[imgid=%s]download html failed."%self.img_id)
                 return -1
-            self.save_html(html, cache_file)
         self.soup = BeautifulSoup(html, 'html.parser')
         return 0
 
@@ -165,15 +165,19 @@ class WebParser(object):
             return img_tag.get("src", "").strip()
 
 if __name__ == "__main__":
-    img_attr_csv_file = open("./data/img_attr.csv", 'a+')
-    img_comments_file = open("./data/img_comments.csv", 'a+')
+    start_imgid = 1
+    end_imgid = 300000
+    imgid_list = [imgid for imgid in range(start_imgid, end_imgid)]
+    
+    img_attr_csv_file = open("./data/img_attr.csv", 'aw')
+    img_comments_file = open("./data/img_comments.csv", 'aw')
     
     # lock
     img_attr_lock = Lock()
     img_comment_lock = Lock()
     
-    def func(imgid):
-        web_parser = WebParser(wait_second=1, max_retry_time=10)
+    def Spider(imgid):
+        web_parser = WebParser(wait_second=0, max_retry_time=10)
         if web_parser.load_html(imgid) != 0:
             return
         
@@ -207,12 +211,8 @@ if __name__ == "__main__":
 
         web_parser.save_image()
     
-    start_imgid = 170000
-    end_imgid = 170100
-    imgid_list = [imgid for imgid in range(start_imgid, end_imgid)]
-    
-    p = Pool()
-    p.map_async(func, imgid_list)
+    p = Pool(processes=16)
+    p.map_async(Spider, imgid_list)
     p.close()
     p.join()
     
