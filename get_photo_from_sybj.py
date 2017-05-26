@@ -9,32 +9,33 @@ import matplotlib.pyplot as plt
 import logging
 import time
 import re
+import requests
+from multiprocessing import Process, Semaphore, Lock, Queue, Pool
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s %(message)s',
                     datefmt='%m-%d %H:%M')
 
+def loginfo(msg):
+    logging.info(msg)
+    
+def logerror(msg):
+    logging.error(msg)
+    
+def logwarning(msg):
+    logging.warning(msg)
 
 def all_strip(s):
     return "".join(s.split())
 
-
 class WebParser(object):
-    def __init__(self, img_id, wait_second=1, max_retry_time=10):
+    def __init__(self, wait_second=1, max_retry_time=10):
         self.html_cache_path = "./data/cache/"
         self.img_path = "./data/img/"
-        self.img_id = img_id
+        self.img_id = -1
         self.soup = None
-        self.request_num = 0
-        self.cached_img_num = 0
         self.wait_second = wait_second
         self.max_retry_time = max_retry_time
-
-        if -1 == self.load_html():
-            logging.fatal("loading html for img_id=[%s] failed!"%self.img_id)
-            self.is_loaded = False
-        else:
-            self.is_loaded = True
     
     def build_request_url(self):
         return "http://www.sybj.com/may.php?c=w&a=organizationCommunity&t=1&hid=1126&id=%s"%self.img_id
@@ -44,42 +45,36 @@ class WebParser(object):
         request_headers = {'User-Agent': user_agent}
         return request_headers
 
-    def load_html(self):
+    def load_html(self, imgid):
+        self.img_id = str(imgid)
         cache_file = self.html_cache_path + "%s.html"%self.img_id
         if os.path.exists(cache_file):
-            logging.info("try load html from file=[%s]"%cache_file)
+            loginfo("[imgid=%s]html has been cached."%self.img_id)
             html = open(cache_file, 'r').read()
         else:
             url = self.build_request_url()
             headers = self.build_request_headers()
-            request = urllib2.Request(url, headers=headers)
             is_opened = False
             for _ in range(self.max_retry_time):
                 try:
-                    logging.info("try load html from url=[%s]"%url)
-                    response = urllib2.urlopen(request, timeout=60)
+                    html = requests.get(url=url, headers=headers).content
                 except Exception, e:
-                    logging.warning("img_id=[%s] load html failed."%self.img_id)
-                    logging.error(str(e))
                     time.sleep(self.wait_second * 10)
                 else:
-                    logging.info("img_id=[%s] load html successfully."%self.img_id)
+                    loginfo("[imgid=%s]download html successfully."%self.img_id)
                     is_opened = True
-                    time.sleep(self.wait_second)
                     break
             if not is_opened:
+                logwarning("[imgid=%s]download html failed."%self.img_id)
                 return -1
-            html = response.read()
             self.save_html(html, cache_file)
         self.soup = BeautifulSoup(html, 'html.parser')
-        self.request_num += 1
         return 0
 
     def save_html(self, html, cache_file):
         fhtml = open(cache_file, 'w')
         fhtml.write(html)
         fhtml.close()
-        logging.info("[html]%s cached successfully."%cache_file)
 
     def get_datestamp(self):
         date_tag = self.soup.find("div", class_="data")
@@ -147,99 +142,84 @@ class WebParser(object):
         return comment_list
 
     def save_image(self):
-        img_url = self.get_img_url()
-        if img_url == "":
-            return 
         cached_img = self.img_path + "%s.jpg"%self.img_id
         if os.path.exists(cached_img):
-            self.cached_img_num += 1
-            logging.info("[img]%s has been cached."%cached_img)
+            loginfo("[imgid=%s]image has been cached."%self.img_id)
         else:
+            img_url = self.get_img_url()
+            if img_url == "":
+                logwarning("[imgid=%s]image does not exist."%self.img_id)
+                return 
             try:
                 urllib.urlretrieve(img_url, cached_img)
             except Exception, e:
-                logging.error("[img]%s cache failed."%img_url)
-                logging.error(str(e))
+                logwarning("[imgid=%s]image caches failed."%self.img_id)
             else:
-                self.cached_img_num += 1
-                logging.info("[img]%s cached successfully."%img_url)
+                loginfo("[imgid=%s]image caches successfully."%self.img_id)
 
-    def load_prev_page(self):
-        prev_page_href = self.get_prev_page_href()
-        if prev_page_href == u"javascript:void(0);":
-            loading.info("All Images has been cached!")
-            self.is_loaded = False
-            return 
-        
-        _idx = prev_page_href.find("&id=")
-        if _idx == -1:
-            self.img_id = str(int(self.img_id) + 1)
-        else:
-            self.img_id = prev_page_href[_idx+4:]
-        if -1 == self.load_html():
-            logging.fatal("loading html for img_id=[%s] failed!"%self.img_id)
-            self.is_loaded = False
-        else:
-            self.is_loaded = True
-        
     def get_img_url(self):
         img_tag = self.soup.find("img", id="imgSybj")
         if img_tag is None:
             return ""
         else:
             return img_tag.get("src", "").strip()
-    
-    def get_prev_page_href(self):
-        prev_page_tag = self.soup.find("a", id="prepage")
-        if prev_page_tag is None:
-            return ""
-        else:
-            return prev_page_tag.get("href", "").strip()
-
-
 
 if __name__ == "__main__":
-    init_img_id = "313"
-    max_request_num = 200000
-    web_parser = WebParser(init_img_id, wait_second=1, max_retry_time=10)
+    img_attr_csv_file = open("./data/img_attr.csv", 'a+')
+    img_comments_file = open("./data/img_comments.csv", 'a+')
     
-    img_attr_csv_file = open("./data/img_attr.csv", 'aw')
-    img_comments_file = open("./data/img_comments.csv", 'aw')
-
-    while web_parser.is_loaded and web_parser.request_num <= max_request_num:
-        img_id = web_parser.img_id
-        try:
-            datestamp = web_parser.get_datestamp()
-            title = web_parser.get_title()
-            zan_num = web_parser.get_zan_num()
-            cai_num = web_parser.get_cai_num()
-            view_num = web_parser.get_view_num()
-            hotness = web_parser.get_hotness()
-            #tags = web_parser.get_tag_list()
+    # lock
+    img_attr_lock = Lock()
+    img_comment_lock = Lock()
+    
+    def func(imgid):
+        web_parser = WebParser(wait_second=1, max_retry_time=10)
+        if web_parser.load_html(imgid) != 0:
+            return
+        
+        datestamp = web_parser.get_datestamp()
+        title = web_parser.get_title()
+        zan_num = web_parser.get_zan_num()
+        cai_num = web_parser.get_cai_num()
+        view_num = web_parser.get_view_num()
+        hotness = web_parser.get_hotness()
             
-            img_attrs = "\t".join([img_id, zan_num, cai_num, view_num, hotness, datestamp, title]).encode("gbk")
-            img_attr_csv_file.write(img_attrs+"\n")
-        except Exception, e:
-            logging.warning("img_id=[%s] attributes save failed."%img_id)
-            logging.error(str(e))
-        else:
-            logging.info("img_id=[%s] attributes save successfully."%img_id)
-
+        img_attrs = "\t".join([str(imgid), zan_num, cai_num, view_num, hotness, datestamp, title]).encode("gbk")
         try:
-            comment_list = web_parser.get_comment_list()
-            for nickname, comment in comment_list:
-                img_comments_file.write("\t".join([img_id, nickname, comment]).encode("gbk")+"\n")
+            img_attr_lock.acquire()
+            img_attr_csv_file.write(img_attrs+"\n")
+            img_attr_csv_file.flush()
         except Exception, e:
-            logging.warning("img_id=[%s] comments save failed."%img_id)
-            logging.error(str(e))
-        else:
-            logging.info("img_id=[%s] comments save successfully."%img_id)
+            logwarning("[imgid=%d]image attributes save failed."%imgid)
+        finally:
+            img_attr_lock.release()
+
+        comment_list = web_parser.get_comment_list()
+        try:
+            img_comment_lock.acquire()
+            for nickname, comment in comment_list:
+                img_comments_file.write("\t".join([str(imgid), nickname, comment]).encode("gbk")+"\n")
+            img_comments_file.flush()
+        except Exception, e:
+            logwarning("[imgid=%d]image comments save failed."%imgid)
+        finally:
+            img_comment_lock.release()
 
         web_parser.save_image()
-
-        web_parser.load_prev_page()
-
-    logging.info("Done! Totally %d images has been cached successfully."%web_parser.cached_img_num)
     
+    start_imgid = 170000
+    end_imgid = 170100
+    imgid_list = [imgid for imgid in range(start_imgid, end_imgid)]
+    
+    p = Pool()
+    p.map_async(func, imgid_list)
+    p.close()
+    p.join()
+    
+    img_attr_csv_file.flush()
+    img_comments_file.flush()
     img_attr_csv_file.close()
     img_comments_file.close()
+    
+    loginfo("Finished.")
+    
