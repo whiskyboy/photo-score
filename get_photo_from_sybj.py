@@ -15,15 +15,22 @@ from multiprocessing import Process, Semaphore, Lock, Queue, Pool
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s %(message)s',
                     datefmt='%m-%d %H:%M')
+log_lock = Lock()
 
 def loginfo(msg):
-    logging.info(msg)
+    log_lock.acquire()
+    logging.info("%s-%s"%(os.getpid(), msg))
+    log_lock.release()
     
 def logerror(msg):
-    logging.error(msg)
+    log_lock.acquire()
+    logging.error("%s-%s"%(os.getpid(), msg))
+    log_lock.release()
     
 def logwarning(msg):
-    logging.warning(msg)
+    log_lock.acquire()
+    logging.warning("%s-%s"%(os.getpid(), msg))
+    log_lock.release()
 
 def all_strip(s):
     return "".join(s.split())
@@ -67,9 +74,9 @@ class WebParser(object):
                     break
             if not is_opened:
                 logwarning("[imgid=%s]download html failed."%self.img_id)
-                return -1
+                return False
         self.soup = BeautifulSoup(html, 'html.parser')
-        return 0
+        return True
 
     def save_html(self, html, cache_file):
         fhtml = open(cache_file, 'w')
@@ -78,28 +85,28 @@ class WebParser(object):
 
     def get_datestamp(self):
         date_tag = self.soup.find("div", class_="data")
-        if date_tag is None:
+        if date_tag is None or date_tag.string is None:
             return "NAN"
         else:
             return date_tag.string.strip()
 
     def get_title(self):
         title_tag = self.soup.find("div", class_="articleContent")
-        if title_tag is None:
+        if title_tag is None or title_tag.string is None:
             return "NAN"
         else:
             return all_strip(title_tag.string)
 
     def get_zan_num(self):
         zan_num_tag = self.soup.find("span", id="zan-num")
-        if zan_num_tag is None:
+        if zan_num_tag is None or zan_num_tag.string is None:
             return "-1"
         else:
             return zan_num_tag.string.strip()
 
     def get_cai_num(self):
         cai_num_tag = self.soup.find("span", id="cai-num")
-        if cai_num_tag is None:
+        if cai_num_tag is None or cai_num_tag.string is None:
             return "-1"
         else:
             return cai_num_tag.string.strip()
@@ -148,14 +155,16 @@ class WebParser(object):
         else:
             img_url = self.get_img_url()
             if img_url == "":
-                logwarning("[imgid=%s]image does not exist."%self.img_id)
-                return 
+                #logwarning("[imgid=%s]image does not exist."%self.img_id)
+                return False
             try:
                 urllib.urlretrieve(img_url, cached_img)
             except Exception, e:
                 logwarning("[imgid=%s]image caches failed."%self.img_id)
+                return False
             else:
                 loginfo("[imgid=%s]image caches successfully."%self.img_id)
+        return True
 
     def get_img_url(self):
         img_tag = self.soup.find("img", id="imgSybj")
@@ -177,9 +186,13 @@ if __name__ == "__main__":
     img_comment_lock = Lock()
     
     def Spider(imgid):
+        loginfo("processing %d"%imgid)
         web_parser = WebParser(wait_second=0, max_retry_time=10)
-        if web_parser.load_html(imgid) != 0:
+        if not web_parser.load_html(imgid):
             return
+        
+        if not web_parser.save_image():
+            return 
         
         datestamp = web_parser.get_datestamp()
         title = web_parser.get_title()
@@ -188,9 +201,9 @@ if __name__ == "__main__":
         view_num = web_parser.get_view_num()
         hotness = web_parser.get_hotness()
             
-        img_attrs = "\t".join([str(imgid), zan_num, cai_num, view_num, hotness, datestamp, title]).encode("gbk")
         try:
             img_attr_lock.acquire()
+            img_attrs = "\t".join([str(imgid), zan_num, cai_num, view_num, hotness, datestamp, title]).encode("gbk")
             img_attr_csv_file.write(img_attrs+"\n")
             img_attr_csv_file.flush()
         except Exception, e:
@@ -209,10 +222,9 @@ if __name__ == "__main__":
         finally:
             img_comment_lock.release()
 
-        web_parser.save_image()
     
     p = Pool(processes=16)
-    p.map_async(Spider, imgid_list)
+    p.map(Spider, imgid_list)
     p.close()
     p.join()
     
