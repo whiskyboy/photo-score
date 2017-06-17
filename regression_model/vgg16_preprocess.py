@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%m-%d %H:%M')
 
 root_path = "./data/"
-batch_size = 256 
+batch_size = 64
 
 # 自定义DirectoryIterator类，可以返回自定义的label
 class CustomDirectoryIterator(DirectoryIterator):
@@ -129,15 +129,23 @@ def vgg_preprocess(model, mode="train"):
         labels.extend(label)
         logging.info("[step=%d]processed %.2f%% images"%(_+1, (_+1)*100.0/(steps+1)))
 
-    save_array(save_array_root_path+"feature.bc", np.array(features))
-    save_array(save_array_root_path+"label.bc", np.array(labels))
+        if (_+1)%100 == 0:
+            epoch = _ // 100
+            save_array(save_array_root_path+"feature%s.bc"%epoch, np.array(features))
+            save_array(save_array_root_path+"label%s.bc"%epoch, np.array(labels))
+            features = []
+            labels = []
+
+    epoch = steps // 100
+    save_array(save_array_root_path+"feature%s.bc"%epoch, np.array(features))
+    save_array(save_array_root_path+"label%s.bc"%epoch, np.array(labels))
 
 
 if __name__ == "__main__":
     model = vgg_feature_model()
 
-    vgg_preprocess(model, "train")
-    logging.info("ALL IMAGES IN TRAIN MODE HAD BEEN PROCESSED.")
     vgg_preprocess(model, "valid")
     logging.info("ALL IMAGES IN VALID MODE HAD BEEN PROCESSED.")
+    vgg_preprocess(model, "train")
+    logging.info("ALL IMAGES IN TRAIN MODE HAD BEEN PROCESSED.")
 
